@@ -34,8 +34,10 @@ from cekit.tools import (
     Map,
     download_file,
     get_base_image_digest_info,
+    get_skopeo_inspect_json,
     load_descriptor,
     parse_env_timeout,
+    split_image_name_ref,
 )
 from cekit.version import __version__ as cekit_version
 
@@ -201,6 +203,7 @@ class Generator(object):
         self.prepare_artifacts()
         self.prepare_repositories()
         self.image.remove_none_keys()
+        self.resolve_floating_parent_image()
         self.image.write(os.path.join(self.target, "image.yaml"))
         self.render_image_file()
         self.render_help()
@@ -495,6 +498,21 @@ class Generator(object):
             self.image["packages"]["repositories_injected"] = injected_repos
         else:
             self.image["packages"]["set_url"] = injected_repos
+
+
+    def resolve_floating_parent_image(self) -> None:
+        """
+        Replace the FROM image tag/digest specification (if any) with the
+        Manifest List Digest that it current resolves to.
+        """
+        # we don't worry about from: in any modules (see #958)
+        (frm, tag) = split_image_name_ref(self.image['from'])
+        LOGGER.debug("Generator.resolve_floating_parent_image: {}, {}".format(frm,tag))
+        image_json = get_skopeo_inspect_json(frm)
+        digest = image_json['Digest']
+        LOGGER.debug("Generator.resolve_floating_parent_image: digest is {}".format(digest))
+        self.image['from'] = frm + "@" + digest
+
 
     def _prepare_content_sets(self, content_sets: Repository):
         if not content_sets:
