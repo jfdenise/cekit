@@ -219,6 +219,28 @@ def get_latest_image_version(image: str) -> str:
     return f'{image.split(":")[0]}:{tag}'
 
 
+def split_image_name_ref(img: str) -> Tuple[str,str]:
+    """
+    Split a container image reference into a tuple of (base, ref), where ref
+    is the digest, if specified; or the tag, if specified; or 'latest'.
+    """
+    i = img.find('@')
+    if i > 0:
+        digest = img[i+1:]
+        # handle tag-and-digest case
+        (newimg,_) = split_image_name_ref(img[:i])
+        return (newimg, digest)
+
+    i = img.rfind(':')
+    if i > 0:
+        candidate_tag = img[i+1:]
+        # rule out host:port specifier
+        if not "/" in candidate_tag:
+            return (img[:i], candidate_tag)
+
+    return (img, 'latest')
+
+
 def get_tag_from_inspect_struct(struct: Mapping) -> str:
     """Get the tag of a component from it's inspect struct
 
