@@ -201,12 +201,17 @@ class Generator(object):
         self.prepare_artifacts()
         self.prepare_repositories()
         self.image.remove_none_keys()
+        self.resolve_base_image_digest()
         self.image.write(os.path.join(self.target, "image.yaml"))
         self.render_image_file()
         self.render_help()
 
     def add_redhat_overrides(self):
         self._overrides.append(self.get_redhat_overrides())
+
+    def resolve_base_image_digest(self):
+        """No-op in base Generator, this method may be implemented in sub-classes."""
+        pass
 
     def add_build_labels(self):
         image_labels = self.image.labels
@@ -495,6 +500,7 @@ class Generator(object):
             self.image["packages"]["repositories_injected"] = injected_repos
         else:
             self.image["packages"]["set_url"] = injected_repos
+
 
     def _prepare_content_sets(self, content_sets: Repository):
         if not content_sets:
