@@ -93,139 +93,122 @@ def test_prepare_content_sets_should_not_fail_when_cs_is_empty(tmpdir):
             assert generator._prepare_content_sets({}) is False
 
 
-def test_add_build_labels_injects_oci_base_labels(tmpdir, mocker):
-    """When skopeo returns a digest, the two OCI base labels should be added."""
-    image = Image(
-        yaml.safe_load("""
-    from: registry.example.com/mybase:1.0
+DIGEST = "sha256:" + "ab" * 32
+
+
+def _oci_labels(image):
+    return {lbl.name: lbl.value for lbl in image.labels}
+
+
+def _image_with_base(base, labels=""):
+    return Image(
+        yaml.safe_load(f"""
+    from: {base}
     name: test/foo
     version: 1.9
+    {labels}
     """),
         "foo",
     )
-    mocker.patch(
-        "cekit.generator.base.get_base_image_digest_info",
-        return_value=("registry.example.com/mybase:1.0", "sha256:abcdef1234567890"),
-    )
+
+
+def test_add_opencontainers_base_labels_injects_name_and_digest(tmpdir):
+    """When the base is digest-referenced, the two OCI base labels should be added."""
+    image = _image_with_base(f"registry.example.com/mybase@{DIGEST}")
     with docker_generator(tmpdir) as generator:
         generator.image = image
-        generator.add_build_labels()
+        generator.add_opencontainers_base_labels()
 
-    label_names = {lbl.name: lbl.value for lbl in image.labels}
-    assert label_names["org.opencontainers.image.base.name"] == "registry.example.com/mybase:1.0"
-    assert label_names["org.opencontainers.image.base.digest"] == "sha256:abcdef1234567890"
+    labels = _oci_labels(image)
+    assert labels["org.opencontainers.image.base.name"] == "registry.example.com/mybase"
+    assert labels["org.opencontainers.image.base.digest"] == DIGEST
 
 
-def test_add_build_labels_skips_oci_base_labels_when_already_set(tmpdir, mocker):
+def test_add_opencontainers_base_labels_strips_tag_from_name(tmpdir):
+    image = _image_with_base(f"registry.example.com:5000/mybase:1.0@{DIGEST}")
+    with docker_generator(tmpdir) as generator:
+        generator.image = image
+        generator.add_opencontainers_base_labels()
+
+    labels = _oci_labels(image)
+    assert labels["org.opencontainers.image.base.name"] == "registry.example.com:5000/mybase"
+    assert labels["org.opencontainers.image.base.digest"] == DIGEST
+
+
+def test_add_opencontainers_base_labels_skips_when_already_set(tmpdir):
     """User-defined OCI base labels must not be overwritten."""
-    image = Image(
-        yaml.safe_load("""
-    from: registry.example.com/mybase:1.0
-    name: test/foo
-    version: 1.9
-    labels:
+    image = _image_with_base(
+        f"registry.example.com/mybase@{DIGEST}",
+        """labels:
       - name: org.opencontainers.image.base.name
         value: user-defined-name
       - name: org.opencontainers.image.base.digest
-        value: sha256:userdigest
-    """),
-        "foo",
+        value: sha256:userdigest""",
     )
-    mock_fn = mocker.patch("cekit.generator.base.get_base_image_digest_info")
     with docker_generator(tmpdir) as generator:
         generator.image = image
-        generator.add_build_labels()
+        generator.add_opencontainers_base_labels()
 
-    mock_fn.assert_not_called()
-    label_names = {lbl.name: lbl.value for lbl in image.labels}
-    assert label_names["org.opencontainers.image.base.name"] == "user-defined-name"
-    assert label_names["org.opencontainers.image.base.digest"] == "sha256:userdigest"
+    labels = _oci_labels(image)
+    assert labels["org.opencontainers.image.base.name"] == "user-defined-name"
+    assert labels["org.opencontainers.image.base.digest"] == "sha256:userdigest"
 
 
-def test_add_build_labels_skips_oci_base_labels_for_scratch(tmpdir, mocker):
-    """FROM scratch images must not trigger a skopeo call."""
-    image = Image(
-        yaml.safe_load("""
-    from: scratch
-    name: test/foo
-    version: 1.9
-    """),
-        "foo",
-    )
-    mock_fn = mocker.patch("cekit.generator.base.get_base_image_digest_info")
+def test_add_opencontainers_base_labels_skips_for_scratch(tmpdir):
+    image = _image_with_base("scratch")
     with docker_generator(tmpdir) as generator:
         generator.image = image
-        generator.add_build_labels()
+        generator.add_opencontainers_base_labels()
 
-    mock_fn.assert_not_called()
+    labels = _oci_labels(image)
+    assert "org.opencontainers.image.base.name" not in labels
+    assert "org.opencontainers.image.base.digest" not in labels
 
 
-def test_add_build_labels_skips_oci_base_labels_when_only_name_is_set(tmpdir, mocker):
-    """If the user sets only base.name, skopeo must not be called and base.digest must not be injected."""
-    image = Image(
-        yaml.safe_load("""
-    from: registry.example.com/mybase:1.0
-    name: test/foo
-    version: 1.9
-    labels:
+def test_add_opencontainers_base_labels_skips_when_only_name_is_set(tmpdir):
+    """If the user sets only base.name, base.digest must not be injected."""
+    image = _image_with_base(
+        f"registry.example.com/mybase@{DIGEST}",
+        """labels:
       - name: org.opencontainers.image.base.name
-        value: user-defined-name
-    """),
-        "foo",
+        value: user-defined-name""",
     )
-    mock_fn = mocker.patch("cekit.generator.base.get_base_image_digest_info")
     with docker_generator(tmpdir) as generator:
         generator.image = image
-        generator.add_build_labels()
+        generator.add_opencontainers_base_labels()
 
-    mock_fn.assert_not_called()
-    label_names = {lbl.name: lbl.value for lbl in image.labels}
-    assert label_names["org.opencontainers.image.base.name"] == "user-defined-name"
-    assert "org.opencontainers.image.base.digest" not in label_names
+    labels = _oci_labels(image)
+    assert labels["org.opencontainers.image.base.name"] == "user-defined-name"
+    assert "org.opencontainers.image.base.digest" not in labels
 
 
-def test_add_build_labels_skips_oci_base_labels_when_only_digest_is_set(tmpdir, mocker):
-    """If the user sets only base.digest, skopeo must not be called and base.name must not be injected."""
-    image = Image(
-        yaml.safe_load("""
-    from: registry.example.com/mybase:1.0
-    name: test/foo
-    version: 1.9
-    labels:
+def test_add_opencontainers_base_labels_skips_when_only_digest_is_set(tmpdir):
+    """If the user sets only base.digest, base.name must not be injected."""
+    image = _image_with_base(
+        f"registry.example.com/mybase@{DIGEST}",
+        """labels:
       - name: org.opencontainers.image.base.digest
-        value: sha256:userdigest
-    """),
-        "foo",
+        value: sha256:userdigest""",
     )
-    mock_fn = mocker.patch("cekit.generator.base.get_base_image_digest_info")
     with docker_generator(tmpdir) as generator:
         generator.image = image
-        generator.add_build_labels()
+        generator.add_opencontainers_base_labels()
 
-    mock_fn.assert_not_called()
-    label_names = {lbl.name: lbl.value for lbl in image.labels}
-    assert label_names["org.opencontainers.image.base.digest"] == "sha256:userdigest"
-    assert "org.opencontainers.image.base.name" not in label_names
+    labels = _oci_labels(image)
+    assert labels["org.opencontainers.image.base.digest"] == "sha256:userdigest"
+    assert "org.opencontainers.image.base.name" not in labels
 
 
-def test_add_build_labels_tolerates_skopeo_unavailable(tmpdir, mocker):
-    """If skopeo is unavailable (returns None), build should not fail."""
-    image = Image(
-        yaml.safe_load("""
-    from: registry.example.com/mybase:1.0
-    name: test/foo
-    version: 1.9
-    """),
-        "foo",
-    )
-    mocker.patch("cekit.generator.base.get_base_image_digest_info", return_value=None)
+def test_add_opencontainers_base_labels_skips_when_base_has_no_digest(tmpdir):
+    """If the digest could not be resolved (FROM is tag-only), build should not fail."""
+    image = _image_with_base("registry.example.com/mybase:1.0")
     with docker_generator(tmpdir) as generator:
         generator.image = image
-        generator.add_build_labels()
+        generator.add_opencontainers_base_labels()
 
-    label_names = {lbl.name for lbl in image.labels}
-    assert "org.opencontainers.image.base.name" not in label_names
-    assert "org.opencontainers.image.base.digest" not in label_names
+    labels = _oci_labels(image)
+    assert "org.opencontainers.image.base.name" not in labels
+    assert "org.opencontainers.image.base.digest" not in labels
 
 
 def test_large_labels_should_break_lines(tmpdir):

@@ -78,10 +78,12 @@ class Builder(Command):
         self.run()
 
     def prepare(self) -> None:
+        generator_args = {}
         if self.build_engine == "podman":
             from cekit.generator.podman import PodmanGenerator as generator_impl
 
             container_file: str = "Containerfile"
+            generator_args["pull"] = bool(self.params.pull)
         elif self.build_engine == "buildah":
             from cekit.generator.docker import DockerGenerator as generator_impl
 
@@ -107,6 +109,7 @@ class Builder(Command):
             container_file,
             self.params.overrides,
             self.params.no_squash,
+            **generator_args,
         )
 
         if CONFIG.get("common", "redhat"):

@@ -7,6 +7,7 @@ from cekit.generator.docker import DockerGenerator
 from cekit.tools import split_image_name_ref
 
 import json
+import os
 import subprocess
 import shutil
 
@@ -21,9 +22,17 @@ _list_manifest_types = [
 ]
 
 def _is_manifest_list(ref):
+    # Query the registry rather than local containers-storage: with a remote
+    # podman (macOS, Windows), the image lives in the podman machine and is
+    # not visible to skopeo running on the host.
+    cmd = [_skopeo, "inspect", "--raw"]
+    auth = os.getenv("REGISTRY_AUTH_FILE")
+    if auth:
+        cmd.extend(["--authfile", auth])
+    cmd.append(f"docker://{ref}")
+
     out = json.loads(subprocess.run(
-        [_skopeo, "inspect", "--raw", f"containers-storage:{ref}"],
-        capture_output=True, text=True, check=True
+        cmd, capture_output=True, text=True, check=True
     ).stdout)
 
     return out.get("mediaType") in _list_manifest_types or out.get("manifests")
@@ -36,10 +45,12 @@ class PodmanGenerator(DockerGenerator):
         container_file: str,
         overrides: List[str],
         no_squash: bool,
+        pull: bool = False,
     ):
         super(DockerGenerator, self).__init__(
             descriptor_path, target, container_file, overrides, no_squash
         )
+        self.pull = pull
 
     def resolve_base_image_digest(self):
         """Update the base image reference with a digest-reference equivalent,
@@ -58,6 +69,17 @@ class PodmanGenerator(DockerGenerator):
         if not _skopeo:
             LOGGER.warning("couldn't find skopeo, can't resolve image digest")
             return
+
+        # With --pull, refresh the local image first so that the digest we pin
+        # (and the labels derived from it) is the latest one. Without --pull,
+        # the digest of the locally cached image is used.
+        if self.pull:
+            cmd = [_podman, 'pull', '--quiet', '--', frm]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                LOGGER.warning(f"couldn't pull {frm}, can't resolve image digest: "
+                               f"{result.stderr.strip()}")
+                return
 
         # look up the base image and try to find a digest-reference
         cmd = [_podman , 'image', 'inspect', '--format', 'json', '--', frm]
@@ -81,5 +103,6 @@ class PodmanGenerator(DockerGenerator):
                     return
 
             except subprocess.SubprocessError as e:
-                LOGGER.error(f"error inspecting container metadata for {digest}\n")
+                stderr = (getattr(e, "stderr", None) or "").strip()
+                LOGGER.error(f"error inspecting container metadata for {digest}: {stderr or e}")
                 continue

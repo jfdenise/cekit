@@ -35,6 +35,7 @@ from cekit.tools import (
     download_file,
     load_descriptor,
     parse_env_timeout,
+    split_image_name_ref,
 )
 from cekit.version import __version__ as cekit_version
 
